@@ -18,6 +18,13 @@ const icons = {
   trash: <><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></>,
   users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
   bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
+  monitor: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></>,
+  settings: <><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" /><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z" /></>,
+  sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></>,
+  moon: <path d="M20.9 13A8.5 8.5 0 0 1 11 3.1 8.5 8.5 0 1 0 20.9 13Z" />,
+  shield: <><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path d="m9 12 2 2 4-4" /></>,
+  type: <><path d="M4 7V4h16v3M9 20h6m-3-16v16" /></>,
+  info: <><circle cx="12" cy="12" r="10" /><path d="M12 16v-4m0-4h.01" /></>,
 };
 
 function Icon({ name, size = 20, ...props }) {
@@ -113,13 +120,120 @@ function AuthScreen({ onAuthenticated, startupError }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
-  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal-card" role="dialog" aria-modal="true" aria-label={title}><div className="modal-heading"><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Icon name="close" /></button></div>{children}</section></div>;
+function Modal({ title, onClose, children, className = '' }) {
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`modal-card ${className}`} role="dialog" aria-modal="true" aria-label={title}><div className="modal-heading"><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Закрыть"><Icon name="close" /></button></div>{children}</section></div>;
 }
 
 const reactionChoices = ['❤️', '😂', '🔥', '👍', '👀', '🎉', '😮', '💚'];
 
-function Messenger({ user, onLogout }) {
+const settingsSections = [
+  { id: 'appearance', label: 'Внешний вид', icon: 'sun' },
+  { id: 'notifications', label: 'Уведомления', icon: 'bell' },
+  { id: 'account', label: 'Мой аккаунт', icon: 'shield' },
+  { id: 'about', label: 'О приложении', icon: 'info' },
+];
+
+function SettingsPanel({
+  user,
+  section,
+  onSectionChange,
+  theme,
+  onThemeChange,
+  density,
+  onDensityChange,
+  notificationsEnabled,
+  onToggleNotifications,
+  onLogout,
+  onDeleteAccount,
+  deleteBusy,
+  deleteError,
+}) {
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+
+  function submitAccountDeletion(event) {
+    event.preventDefault();
+    onDeleteAccount(password, confirmation);
+  }
+
+  return (
+    <Modal title="Настройки Otiscord" onClose={() => onSectionChange('')} className="settings-modal">
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Разделы настроек">
+          {settingsSections.map((item) => (
+            <button key={item.id} className={section === item.id ? 'settings-nav-active' : ''} onClick={() => onSectionChange(item.id)}>
+              <Icon name={item.icon} size={17} />{item.label}
+            </button>
+          ))}
+          <div className="settings-nav-caption">ПРОФИЛЬ</div>
+          <div className="settings-nav-profile"><Avatar user={user} /><span><strong>{user.username}</strong><small>#{user.tag}</small></span></div>
+        </nav>
+        <div className="settings-content">
+          {section === 'appearance' && <>
+            <div className="settings-kicker">ПЕРСОНАЛИЗАЦИЯ</div>
+            <h3>Внешний вид</h3>
+            <p className="settings-description">Настрой Otiscord так, как удобно именно тебе.</p>
+            <div className="settings-option">
+              <div><strong>Цветовая тема</strong><small>Выбери оформление приложения</small></div>
+              <div className="settings-choice-group" role="group" aria-label="Цветовая тема">
+                <button className={theme === 'dark' ? 'settings-choice-selected' : ''} onClick={() => onThemeChange('dark')}><Icon name="moon" size={16} />Тёмная</button>
+                <button className={theme === 'light' ? 'settings-choice-selected' : ''} onClick={() => onThemeChange('light')}><Icon name="sun" size={16} />Светлая</button>
+              </div>
+            </div>
+            <div className="settings-option">
+              <div><strong>Плотность сообщений</strong><small>Измени расстояние между сообщениями</small></div>
+              <div className="settings-choice-group" role="group" aria-label="Плотность сообщений">
+                <button className={density === 'comfortable' ? 'settings-choice-selected' : ''} onClick={() => onDensityChange('comfortable')}>Обычная</button>
+                <button className={density === 'compact' ? 'settings-choice-selected' : ''} onClick={() => onDensityChange('compact')}>Компактная</button>
+              </div>
+            </div>
+            <div className="settings-note"><Icon name="monitor" size={17} /><span>Настройки сохраняются в этом браузере и применяются сразу.</span></div>
+          </>}
+          {section === 'notifications' && <>
+            <div className="settings-kicker">БУДЬ В КУРСЕ</div>
+            <h3>Уведомления</h3>
+            <p className="settings-description">Выбери, когда Otiscord может отвлечь тебя от других дел.</p>
+            <div className="settings-option">
+              <div><strong>Уведомления на рабочем столе</strong><small>Показывать новые сообщения, когда вкладка не активна</small></div>
+              <button className={`settings-switch ${notificationsEnabled ? 'settings-switch-on' : ''}`} role="switch" aria-checked={notificationsEnabled} onClick={onToggleNotifications}><span /></button>
+            </div>
+            <div className="settings-note"><Icon name="bell" size={17} /><span>{!('Notification' in window) ? 'Этот браузер не поддерживает системные уведомления.' : Notification.permission === 'denied' ? 'Разреши уведомления для Otiscord в настройках браузера, чтобы включить эту функцию.' : 'Уведомления работают, когда браузер разрешает их показ. Звуковые уведомления пока не поддерживаются.'}</span></div>
+          </>}
+          {section === 'account' && <>
+            <div className="settings-kicker">ЛИЧНЫЕ ДАННЫЕ</div>
+            <h3>Мой аккаунт</h3>
+            <p className="settings-description">Управляй профилем и доступом к Otiscord.</p>
+            <div className="settings-account-card"><Avatar user={user} large /><div><strong>{user.username}</strong><small>{user.username}#{user.tag}</small></div><span className="status-pill">Аккаунт активен</span></div>
+            <button className="button button-outline settings-logout" onClick={onLogout}>Выйти из аккаунта</button>
+            <div className="settings-danger-zone">
+              <strong>Удалить аккаунт</strong>
+              <p>Это действие необратимо. Профиль, личные чаты и отправленные тобой сообщения будут удалены. В группах останутся другие участники, а созданная тобой группа перейдёт одному из них.</p>
+              <form className="settings-delete-form" onSubmit={submitAccountDeletion}>
+                <label className="field-label">Текущий пароль<input type="password" autoComplete="current-password" required minLength={1} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+                <label className="field-label">Для подтверждения введи УДАЛИТЬ<input autoComplete="off" required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+                {deleteError && <p className="auth-error">{deleteError}</p>}
+                <button className="button button-danger" type="submit" disabled={deleteBusy || confirmation !== 'УДАЛИТЬ'}>{deleteBusy ? 'Удаляем аккаунт…' : 'Удалить аккаунт навсегда'}</button>
+              </form>
+            </div>
+          </>}
+          {section === 'about' && <>
+            <div className="settings-kicker">ОТКРЫВАЙ БОЛЬШЕ</div>
+            <h3>Otiscord сегодня</h3>
+            <p className="settings-description">Общение, которое развивается вместе с тобой.</p>
+            <div className="settings-feature-list">
+              <div><Icon name="check" size={17} /><span><strong>Личные и групповые чаты</strong><small>Ищи людей и создавай разговоры с друзьями</small></span></div>
+              <div><Icon name="check" size={17} /><span><strong>Живые сообщения и реакции</strong><small>Общайся и реагируй на сообщения в реальном времени</small></span></div>
+              <div><Icon name="check" size={17} /><span><strong>Твои настройки остаются твоими</strong><small>Тема и плотность интерфейса хранятся в браузере</small></span></div>
+            </div>
+            <div className="settings-roadmap"><strong>В разработке</strong><span>Вложения, аудио- и видеозвонки, расширенные настройки профиля.</span></div>
+          </>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityChange, notificationsEnabled, onToggleNotifications }) {
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState('');
   const [messages, setMessages] = useState([]);
@@ -138,6 +252,9 @@ function Messenger({ user, onLogout }) {
   const [editingId, setEditingId] = useState('');
   const [pendingDelete, setPendingDelete] = useState(null);
   const [mobileList, setMobileList] = useState(false);
+  const [settingsSection, setSettingsSection] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [connection, setConnection] = useState('connecting');
   const [groupMode, setGroupMode] = useState(false);
   const [userSearchResults, setUserSearchResults] = useState([]);
@@ -146,7 +263,9 @@ function Messenger({ user, onLogout }) {
   const messageInput = useRef(null);
   const messagesEndRef = useRef(null);
   const messagesRef = useRef(messages);
+  const notificationsEnabledRef = useRef(notificationsEnabled);
   messagesRef.current = messages;
+  notificationsEnabledRef.current = notificationsEnabled;
   const activeChat = conversations.find((item) => item.id === activeId) || null;
   const visibleChats = useMemo(() => conversations.filter((chat) => {
     const others = chat.members.filter((member) => member.id !== user.id).map((member) => member.username).join(' ');
@@ -209,6 +328,19 @@ function Messenger({ user, onLogout }) {
         if (data.type === 'connected') setConnection('connected');
         if (data.type === 'message_created' || data.type === 'message_updated' || data.type === 'reaction_updated') {
           let incoming = data.message;
+          if (
+            data.type === 'message_created'
+            && incoming.author.id !== user.id
+            && document.visibilityState !== 'visible'
+            && notificationsEnabledRef.current
+            && 'Notification' in window
+            && Notification.permission === 'granted'
+          ) {
+            new Notification(`Новое сообщение от ${incoming.author.username}`, {
+              body: incoming.content || 'Отправил(а) сообщение',
+              tag: incoming.conversation_id,
+            });
+          }
           if (data.type !== 'message_created' && data.actor_id !== user.id) {
             const existing = messagesRef.current.find((item) => item.id === incoming.id);
             incoming = {
@@ -376,8 +508,25 @@ function Messenger({ user, onLogout }) {
     onLogout();
   }
 
+  async function deleteAccount(password, confirmation) {
+    setDeleteBusy(true);
+    setDeleteError('');
+    try {
+      await api('/api/auth/account', {
+        method: 'DELETE',
+        body: JSON.stringify({ password, confirmation }),
+      });
+      clearToken();
+      onLogout();
+    } catch (error) {
+      setDeleteError(error.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   return (
-    <main className="messenger">
+    <main className="messenger" data-density={density}>
       <aside className={`sidebar ${mobileList ? 'sidebar-mobile-open' : ''}`}>
         <div className="sidebar-top">
           <button className="brand-lockup" aria-label="Otiscord"><span className="brand-symbol">o</span><span>otiscord</span></button>
@@ -402,7 +551,7 @@ function Messenger({ user, onLogout }) {
           })}
           {!loading && !visibleChats.length && <div className="empty-chat-list">{search ? 'Чаты не найдены' : 'Чатов пока нет. Начни разговор!'}</div>}
         </div>
-        <div className="sidebar-bottom"><button className="profile-button" onClick={() => setModal('profile')}><Avatar user={user} /><span className="profile-copy"><strong>{user.username}<small className="user-tag">#{user.tag}</small></strong><small><span className="tiny-dot" /> В сети</small></span><Icon name="more" size={18} /></button></div>
+        <div className="sidebar-bottom"><button className="profile-button" onClick={() => setModal('profile')}><Avatar user={user} /><span className="profile-copy"><strong>{user.username}<small className="user-tag">#{user.tag}</small></strong><small><span className="tiny-dot" /> В сети</small></span><Icon name="more" size={18} /></button><button className="icon-button sidebar-settings" onClick={() => { setDeleteError(''); setSettingsSection('appearance'); }} aria-label="Настройки" title="Настройки"><Icon name="settings" /></button></div>
       </aside>
 
       <section className={`conversation ${mobileList ? 'conversation-mobile-hidden' : ''}`}>
@@ -469,7 +618,8 @@ function Messenger({ user, onLogout }) {
       </section>
 
       {modal === 'contact' && <Modal title={groupMode ? 'Создать группу' : 'Новый разговор'} onClose={() => { setModal(''); setModalError(''); setUserSearch(''); setNewContact(''); setGroupName(''); setGroupMode(false); }}><div className="modal-tabs"><button className={!groupMode ? 'modal-tab-active' : ''} onClick={() => { setGroupMode(false); setModalError(''); }}>Личное сообщение</button><button className={groupMode ? 'modal-tab-active' : ''} onClick={() => { setGroupMode(true); setModalError(''); }}>Групповой чат</button></div>{groupMode ? <form className="modal-form" onSubmit={createGroup}><label className="field-label">Название группы<input autoFocus value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={80} placeholder="Например, Дизайн-команда" /></label><label className="field-label">Участники (имена через запятую)<input value={newContact} onChange={(event) => setNewContact(event.target.value)} placeholder="alex, maria" /></label><p className="modal-copy">Добавь точные имена пользователей, разделяя их запятыми.</p>{modalError && <p className="auth-error">{modalError}</p>}<button className="button button-primary modal-submit" type="submit"><Icon name="users" size={17} />Создать группу</button></form> : <><p className="modal-copy">Ищи по имени пользователя или тегу. Создадим личный чат.</p><label className="field-label">Имя пользователя<input autoFocus value={newContact || userSearch} onChange={(event) => { setNewContact(event.target.value); setUserSearch(event.target.value); }} placeholder="Например, Алексей" /></label>{userSearchResults.length > 0 && <div className="user-search-results">{userSearchResults.map((result) => <button key={result.id} onClick={() => chooseUser(result.username)}><Avatar user={result} /><span><strong>{result.username}</strong><small>#{result.tag}</small></span><Icon name="back" size={17} /></button>)}</div>}{modalError && <p className="auth-error">{modalError}</p>}<form className="modal-form" onSubmit={openDirect}><button className="button button-primary modal-submit" type="submit"><Icon name="search" size={17} />Найти и открыть чат</button></form><div className="modal-tip"><span className="sparkle">✳</span><span>Пользователь должен сначала создать аккаунт Otiscord.</span></div></>}</Modal>}
-      {modal === 'profile' && <Modal title="Твой профиль" onClose={() => setModal('')}><div className="profile-modal-user"><Avatar user={user} large /><div><strong>{user.username}</strong><span>{user.username}#{user.tag}</span></div></div><div className="profile-settings-row"><span><Icon name="bell" size={18} />Аккаунт</span><span className="status-pill">Подключён</span></div><button className="button button-outline logout-button" onClick={logout}>Выйти из аккаунта</button></Modal>}
+      {modal === 'profile' && <Modal title="Твой профиль" onClose={() => setModal('')}><div className="profile-modal-user"><Avatar user={user} large /><div><strong>{user.username}</strong><span>{user.username}#{user.tag}</span></div></div><div className="profile-settings-row"><span><Icon name="bell" size={18} />Аккаунт</span><span className="status-pill">Подключён</span></div><button className="button button-outline logout-button" onClick={logout}>Выйти из аккаунта</button><button className="button button-outline settings-open-button" onClick={() => { setModal(''); setSettingsSection('appearance'); }}>Открыть настройки <Icon name="settings" size={16} /></button></Modal>}
+      {settingsSection && <SettingsPanel user={user} section={settingsSection} onSectionChange={setSettingsSection} theme={theme} onThemeChange={onThemeChange} density={density} onDensityChange={onDensityChange} notificationsEnabled={notificationsEnabled} onToggleNotifications={onToggleNotifications} onLogout={logout} onDeleteAccount={deleteAccount} deleteBusy={deleteBusy} deleteError={deleteError} />}
       {modal === 'details' && activeChat && <Modal title="Информация о чате" onClose={() => setModal('')}><div className="chat-details-user"><Avatar user={activeChat.kind === 'group' ? { username: activeChat.name, avatar_color: 'violet' } : activeChat.members.find((member) => member.id !== user.id) || user} large /><strong>{activeChat.name}</strong><span>{activeChat.kind === 'group' ? `Групповой чат · ${activeChat.members.length} участников` : activeChat.members.filter((member) => member.id !== user.id).map((member) => `${member.username}#${member.tag}`).join(', ')}</span></div><div className="profile-settings-row"><span><Icon name="users" size={18} />Участники</span><span className="status-pill">{activeChat.members.length}</span></div></Modal>}
       {pendingDelete && <Modal title="Удалить сообщение?" onClose={() => setPendingDelete(null)}><p className="modal-copy">Это удалит сообщение для всех участников чата. Отменить действие будет нельзя.</p><div className="confirm-actions"><button className="button button-outline" onClick={() => setPendingDelete(null)}>Отмена</button><button className="button button-danger" onClick={deleteMessage}>Удалить сообщение</button></div></Modal>}
       {notice && <div className="toast"><span className="tiny-dot" />{notice}</div>}
@@ -481,6 +631,42 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [startupError, setStartupError] = useState('');
   const [checkingSession, setCheckingSession] = useState(Boolean(getToken()));
+  const [theme, setTheme] = useState(() => localStorage.getItem('otiscord.theme') === 'light' ? 'light' : 'dark');
+  const [density, setDensity] = useState(() => localStorage.getItem('otiscord.density') === 'compact' ? 'compact' : 'comfortable');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('otiscord.notifications') === 'enabled');
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('otiscord.theme', theme);
+  }, [theme]);
+  useEffect(() => {
+    localStorage.setItem('otiscord.density', density);
+  }, [density]);
+  useEffect(() => {
+    localStorage.setItem('otiscord.notifications', notificationsEnabled ? 'enabled' : 'disabled');
+  }, [notificationsEnabled]);
+  useEffect(() => {
+    if (notificationsEnabled && (!('Notification' in window) || Notification.permission !== 'granted')) {
+      setNotificationsEnabled(false);
+    }
+  }, [notificationsEnabled]);
+
+  async function toggleDesktopNotifications() {
+    if (notificationsEnabled) {
+      setNotificationsEnabled(false);
+      return;
+    }
+    if (!('Notification' in window)) {
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      return;
+    }
+    const permission = Notification.permission === 'granted'
+      ? 'granted'
+      : await Notification.requestPermission();
+    setNotificationsEnabled(permission === 'granted');
+  }
+
   useEffect(() => {
     const token = getToken();
     if (!token) return;
@@ -489,6 +675,20 @@ export default function App() {
       if (!getToken()) setUser(null);
     }).finally(() => setCheckingSession(false));
   }, []);
-  if (checkingSession) return <main className="auth-screen"><div className="auth-brand">Otiscord</div></main>;
-  return user ? <Messenger user={user} onLogout={() => setUser(null)} /> : <AuthScreen startupError={startupError} onAuthenticated={setUser} />;
+  return (
+    <>
+      <section className="desktop-only-screen" aria-label="Otiscord доступен на компьютере">
+        <div className="desktop-notice-icon"><Icon name="monitor" size={40} /></div>
+        <div className="settings-kicker">OTISCORD · DESKTOP</div>
+        <h1>Нам нужен экран побольше</h1>
+        <p>Otiscord пока доступен только на компьютере. Открой сайт с ноутбука или настольного ПК — мобильная версия появится позже.</p>
+        <div className="desktop-notice-footer"><span className="tiny-dot" />Сохрани ссылку и возвращайся с компьютера</div>
+      </section>
+      {checkingSession
+        ? <main className="auth-screen"><div className="auth-brand">Otiscord</div></main>
+        : user
+          ? <Messenger user={user} onLogout={() => setUser(null)} theme={theme} onThemeChange={setTheme} density={density} onDensityChange={setDensity} notificationsEnabled={notificationsEnabled} onToggleNotifications={toggleDesktopNotifications} />
+          : <AuthScreen startupError={startupError} onAuthenticated={setUser} />}
+    </>
+  );
 }
