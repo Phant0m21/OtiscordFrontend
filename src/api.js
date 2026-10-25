@@ -27,7 +27,14 @@ export async function api(path, { token = getToken(), ...options } = {}) {
     let detail = 'Не удалось выполнить запрос.';
     try {
       const error = await response.json();
-      detail = error.detail || detail;
+      if (typeof error.detail === 'string') {
+        detail = error.detail;
+      } else if (Array.isArray(error.detail)) {
+        detail = error.detail
+          .map((item) => typeof item === 'string' ? item : item && typeof item.msg === 'string' ? item.msg : '')
+          .filter(Boolean)
+          .join(' ');
+      }
     } catch {
       detail = response.statusText || detail;
     }
