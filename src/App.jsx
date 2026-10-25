@@ -43,12 +43,132 @@ function Icon({ name, size = 20, ...props }) {
 
 function Avatar({ user, large = false }) {
   const initials = user?.username?.slice(0, 1).toUpperCase() || '?';
-  return <div className={`avatar avatar-${user?.avatar_color || 'mint'} ${large ? 'avatar-large' : ''}`}>{initials}</div>;
+  return <div className={`avatar avatar-${user?.avatar_color || 'mint'} ${large ? 'avatar-large' : ''}`}>
+    {user?.avatar_url ? <img src={user.avatar_url} alt="" /> : initials}
+  </div>;
 }
 
 function formatTime(value) {
   if (!value) return '';
   return new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function formatPresence(user) {
+  if (!user) return '';
+  if (user.is_online) return 'В сети';
+  if (!user.last_seen_at) return 'Давно не был(а) в сети';
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(user.last_seen_at).getTime()) / 60000));
+  if (minutes < 1) return 'Был(а) в сети только что';
+  if (minutes < 60) return `Был(а) в сети ${minutes} ${minutes === 1 ? 'минуту' : minutes < 5 ? 'минуты' : 'минут'} назад`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Был(а) в сети ${hours} ${hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'} назад`;
+  const days = Math.floor(hours / 24);
+  return `Был(а) в сети ${days} ${days === 1 ? 'день' : days < 5 ? 'дня' : 'дней'} назад`;
+}
+
+function AvatarCropModal({ file, onClose, onSave }) {
+  const [source, setSource] = useState('');
+  const [dimensions, setDimensions] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const cropRef = useRef(null);
+  const dragRef = useRef(null);
+  const size = 280;
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => setDimensions({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => setError('Не удалось открыть это изображение.');
+    image.src = url;
+    setSource(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const fitScale = dimensions ? Math.max(size / dimensions.width, size / dimensions.height) : 1;
+  const imageWidth = dimensions ? dimensions.width * fitScale * zoom : size;
+  const imageHeight = dimensions ? dimensions.height * fitScale * zoom : size;
+  const maxOffsetX = Math.max(0, (imageWidth - size) / 2);
+  const maxOffsetY = Math.max(0, (imageHeight - size) / 2);
+
+  function moveCrop(event) {
+    if (!dragRef.current) return;
+    const deltaX = event.clientX - dragRef.current.x;
+    const deltaY = event.clientY - dragRef.current.y;
+    setOffset({
+      x: Math.max(-maxOffsetX, Math.min(maxOffsetX, dragRef.current.offset.x + deltaX)),
+      y: Math.max(-maxOffsetY, Math.min(maxOffsetY, dragRef.current.offset.y + deltaY)),
+    });
+    dragRef.current = { ...dragRef.current, x: event.clientX, y: event.clientY };
+  }
+
+  async function saveCrop() {
+    if (!dimensions || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const image = new Image();
+      image.src = source;
+      await image.decode();
+      const scale = fitScale * zoom;
+      const left = (size - imageWidth) / 2 + offset.x;
+      const top = (size - imageHeight) / 2 + offset.y;
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Браузер не поддерживает обработку изображения.');
+      context.drawImage(
+        image,
+        -left / scale,
+        -top / scale,
+        size / scale,
+        size / scale,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+      const blob = await new Promise((resolve, reject) => canvas.toBlob(
+        (result) => result ? resolve(result) : reject(new Error('Не удалось подготовить аватар.')),
+        'image/png',
+      ));
+      await onSave(blob);
+    } catch (saveError) {
+      setError(saveError.message);
+      setSaving(false);
+    }
+  }
+
+  return <Modal title="Настройка аватара" onClose={onClose} className="avatar-crop-modal">
+    <p className="settings-description">Перемести фото и выбери масштаб. В профиль попадёт круглая область.</p>
+    <div
+      className="avatar-crop-frame"
+      ref={cropRef}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        dragRef.current = { x: event.clientX, y: event.clientY, offset };
+      }}
+      onPointerMove={moveCrop}
+      onPointerUp={() => { dragRef.current = null; }}
+      onPointerCancel={() => { dragRef.current = null; }}
+      aria-label="Перемести изображение в область аватара"
+    >
+      {source && <img src={source} alt="Предпросмотр аватара" draggable="false" style={{
+        width: imageWidth, height: imageHeight,
+        left: `calc(50% + ${offset.x}px)`, top: `calc(50% + ${offset.y}px)`,
+      }} />}
+      <span className="avatar-crop-circle" />
+    </div>
+    <label className="field-label avatar-zoom">Масштаб<input type="range" min="1" max="3" step="0.01" value={zoom} onChange={(event) => {
+      setZoom(Number(event.target.value));
+      setOffset({ x: 0, y: 0 });
+    }} /></label>
+    {error && <p className="auth-error">{error}</p>}
+    <div className="avatar-crop-actions"><button className="button button-outline" onClick={onClose} disabled={saving}>Отмена</button><button className="button button-primary" onClick={saveCrop} disabled={!dimensions || saving}>{saving ? 'Сохраняем…' : 'Сохранить аватар'}</button></div>
+  </Modal>;
 }
 
 function AuthScreen({ onAuthenticated, startupError }) {
@@ -304,7 +424,7 @@ function SettingsPanel({
   );
 }
 
-function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityChange, notificationsEnabled, onToggleNotifications }) {
+function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density, onDensityChange, notificationsEnabled, onToggleNotifications }) {
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState('');
   const [messages, setMessages] = useState([]);
@@ -335,8 +455,22 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
   const [mediaViewer, setMediaViewer] = useState(null);
   const [formatMenu, setFormatMenu] = useState(null);
   const [unreadByChat, setUnreadByChat] = useState({});
+  const [typingUsers, setTypingUsers] = useState({});
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [storageConfigured, setStorageConfigured] = useState(null);
+  const [profileBio, setProfileBio] = useState(user.bio || '');
+  const [profileBirthDate, setProfileBirthDate] = useState(user.birth_date || '');
+  const [groupMemberName, setGroupMemberName] = useState('');
+  const [groupBusy, setGroupBusy] = useState(false);
   const fileRef = useRef(null);
   const messageInput = useRef(null);
+  const avatarInput = useRef(null);
+  const socketRef = useRef(null);
+  const typingTimerRef = useRef(null);
+  const typingUsersTimersRef = useRef(new Map());
+  const lastTypingSentAtRef = useRef(0);
   const messagesEndRef = useRef(null);
   const messagesRef = useRef(messages);
   const conversationsRef = useRef(conversations);
@@ -353,6 +487,7 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
   activeIdRef.current = activeId;
   notificationsEnabledRef.current = notificationsEnabled;
   const activeChat = conversations.find((item) => item.id === activeId) || null;
+  const activePeer = activeChat?.kind === 'direct' ? activeChat.members.find((member) => member.id !== user.id) : null;
   const visibleChats = useMemo(() => conversations.filter((chat) => {
     const others = chat.members.filter((member) => member.id !== user.id).map((member) => member.username).join(' ');
     return `${chat.name} ${others} ${chat.last_message?.content || ''}`.toLowerCase().includes(search.toLowerCase());
@@ -443,6 +578,16 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    api('/api/health', { token: null }).then((health) => {
+      if (!cancelled) setStorageConfigured(Boolean(health.storage_configured));
+    }).catch(() => {
+      if (!cancelled) setStorageConfigured(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     if (!activeId) {
       setMessages([]);
       return undefined;
@@ -467,6 +612,7 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
     let socket;
     let reconnectTimer;
     let syncTimer;
+    let heartbeatTimer;
     let reconnectDelay = 1000;
     const handleIncomingMessage = (messageData, eventType, actorId) => {
       let incoming = messageData;
@@ -518,18 +664,64 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
       if (cancelled) return;
       setConnection('connecting');
       socket = new WebSocket(websocketUrl());
+      socketRef.current = socket;
       socket.onopen = () => {
         reconnectDelay = 1000;
         socket.send(JSON.stringify({ token: getToken() }));
+        heartbeatTimer = window.setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'heartbeat' }));
+        }, 25000);
       };
       socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'connected') {
           setConnection('connected');
+          onUserChange((current) => current?.id === user.id
+            ? { ...current, is_online: true, last_seen_at: new Date().toISOString() }
+            : current);
           return;
         }
         if (data.type === 'conversation_created') {
           mergeConversation(data.conversation);
+          return;
+        }
+        if (data.type === 'presence_updated') {
+          setConversations((current) => current.map((conversation) => ({
+            ...conversation,
+            members: conversation.members.map((member) => member.id === data.user.id ? { ...member, ...data.user } : member),
+          })));
+          setUserSearchResults((current) => current.map((item) => item.id === data.user.id ? { ...item, ...data.user } : item));
+          return;
+        }
+        if (data.type === 'typing' || data.type === 'typing_stopped') {
+          const conversationId = data.conversation_id;
+          const typingUserId = data.user_id;
+          if (typingUserId === user.id) return;
+          const timerKey = `${conversationId}:${typingUserId}`;
+          window.clearTimeout(typingUsersTimersRef.current.get(timerKey));
+          if (data.type === 'typing') {
+            setTypingUsers((current) => ({
+              ...current,
+              [conversationId]: { ...(current[conversationId] || {}), [typingUserId]: data.username },
+            }));
+            typingUsersTimersRef.current.set(timerKey, window.setTimeout(() => {
+              setTypingUsers((current) => {
+                const next = { ...current, [conversationId]: { ...(current[conversationId] || {}) } };
+                delete next[conversationId][typingUserId];
+                if (!Object.keys(next[conversationId]).length) delete next[conversationId];
+                return next;
+              });
+              typingUsersTimersRef.current.delete(timerKey);
+            }, 5000));
+          } else {
+            typingUsersTimersRef.current.delete(timerKey);
+            setTypingUsers((current) => {
+              const next = { ...current, [conversationId]: { ...(current[conversationId] || {}) } };
+              delete next[conversationId][typingUserId];
+              if (!Object.keys(next[conversationId]).length) delete next[conversationId];
+              return next;
+            });
+          }
           return;
         }
         if (data.type === 'conversation_deleted') {
@@ -552,7 +744,12 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
         if (data.type === 'message_deleted') reflectDeletedMessage(data.message_id);
       };
       socket.onclose = () => {
+        window.clearInterval(heartbeatTimer);
+        if (socketRef.current === socket) socketRef.current = null;
         if (cancelled) return;
+        onUserChange((current) => current?.id === user.id
+          ? { ...current, is_online: false, last_seen_at: new Date().toISOString() }
+          : current);
         setConnection('reconnecting');
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 15000);
@@ -567,8 +764,33 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
       cancelled = true;
       window.clearTimeout(reconnectTimer);
       window.clearTimeout(syncTimer);
+      window.clearInterval(heartbeatTimer);
+      window.clearTimeout(typingTimerRef.current);
+      typingUsersTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      typingUsersTimersRef.current.clear();
+      socketRef.current = null;
       socket?.close();
     };
+  }, [user.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshPresence = async () => {
+      try {
+        const presence = await api('/api/presence');
+        if (cancelled) return;
+        const byId = new Map(presence.map((member) => [member.id, member]));
+        setConversations((current) => current.map((conversation) => ({
+          ...conversation,
+          members: conversation.members.map((member) => byId.has(member.id) ? { ...member, ...byId.get(member.id) } : member),
+        })));
+      } catch (error) {
+        if (!cancelled && getToken()) showNotice(`Не удалось обновить статусы: ${error.message}`);
+      }
+    };
+    refreshPresence();
+    const timer = window.setInterval(refreshPresence, 20000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [user.id]);
 
   useEffect(() => {
@@ -705,6 +927,149 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
     });
   }
 
+  function applyCodeFormatting() {
+    const input = messageInput.current;
+    if (!input) return;
+    const selected = message.slice(input.selectionStart, input.selectionEnd);
+    applyFormatting(selected.includes('\n') ? '```\n' : '`', selected.includes('\n') ? '\n```' : '`');
+  }
+
+  function sendTypingState(isTyping) {
+    const socket = socketRef.current;
+    if (!activeIdRef.current || socket?.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: isTyping ? 'typing' : 'typing_stopped', conversation_id: activeIdRef.current }));
+  }
+
+  function handleComposerChange(value) {
+    setMessage(value);
+    if (!value.trim()) {
+      window.clearTimeout(typingTimerRef.current);
+      sendTypingState(false);
+      return;
+    }
+    if (Date.now() - lastTypingSentAtRef.current > 900) {
+      sendTypingState(true);
+      lastTypingSentAtRef.current = Date.now();
+    }
+    window.clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = window.setTimeout(() => sendTypingState(false), 3200);
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    setProfileBusy(true);
+    try {
+      const updated = await api('/api/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          bio: profileBio,
+          birth_date: profileBirthDate || null,
+        }),
+      });
+      onUserChange(updated);
+      showNotice('Профиль сохранён.');
+    } catch (error) {
+      showNotice(error.message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function saveAvatar(blob) {
+    setAvatarBusy(true);
+    try {
+      const upload = await api('/api/users/me/avatar', {
+        method: 'POST',
+        body: JSON.stringify({ filename: 'avatar.png', content_type: 'image/png', size: blob.size }),
+      });
+      const response = await fetch(upload.upload_url, {
+        method: 'PUT',
+        headers: upload.headers,
+        body: blob,
+      });
+      if (!response.ok) throw new Error(`Хранилище отклонило загрузку аватара (HTTP ${response.status}).`);
+      const updated = await api('/api/users/me/avatar', {
+        method: 'PUT',
+        body: JSON.stringify({ object_key: upload.object_key }),
+      });
+      onUserChange(updated);
+      setAvatarFile(null);
+      showNotice('Аватар обновлён.');
+    } catch (error) {
+      throw new Error(`Не удалось сохранить аватар: ${error.message}`);
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function addGroupMembers(event) {
+    event.preventDefault();
+    if (!activeChat || !groupMemberName.trim()) return;
+    const usernames = [...new Set(groupMemberName.split(',').map((name) => name.trim().replace(/^@/, '')).filter(Boolean))];
+    setGroupBusy(true);
+    try {
+      const updated = await api(`/api/conversations/${activeChat.id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ usernames }),
+      });
+      mergeConversation(updated);
+      setGroupMemberName('');
+      showNotice('Участники группы обновлены.');
+    } catch (error) {
+      showNotice(error.message);
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function removeGroupMember(member) {
+    if (!activeChat) return;
+    setGroupBusy(true);
+    try {
+      await api(`/api/conversations/${activeChat.id}/members/${member.id}`, { method: 'DELETE' });
+      const updated = await api('/api/conversations');
+      const conversation = updated.find((item) => item.id === activeChat.id);
+      if (conversation) mergeConversation(conversation);
+      showNotice(`${member.username} удалён из группы.`);
+    } catch (error) {
+      showNotice(error.message);
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function leaveActiveGroup() {
+    if (!activeChat) return;
+    setGroupBusy(true);
+    try {
+      await api(`/api/conversations/${activeChat.id}/leave`, { method: 'POST' });
+      setConversations((current) => current.filter((item) => item.id !== activeChat.id));
+      setActiveId('');
+      setMessages([]);
+      setModal('');
+    } catch (error) {
+      showNotice(error.message);
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
+  async function deleteActiveGroup() {
+    if (!activeChat) return;
+    setGroupBusy(true);
+    try {
+      await api(`/api/conversations/${activeChat.id}`, { method: 'DELETE' });
+      setConversations((current) => current.filter((item) => item.id !== activeChat.id));
+      setActiveId('');
+      setMessages([]);
+      setModal('');
+    } catch (error) {
+      showNotice(error.message);
+    } finally {
+      setGroupBusy(false);
+    }
+  }
+
   async function sendMessage(event) {
     event.preventDefault();
     const content = message.trim();
@@ -733,6 +1098,8 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
     };
     if (optimisticMessage) upsertMessage(optimisticMessage);
     if (originalMessage) upsertMessage({ ...originalMessage, content });
+    window.clearTimeout(typingTimerRef.current);
+    sendTypingState(false);
     try {
       const path = editingId ? `/api/messages/${editingId}` : `/api/conversations/${activeId}/messages`;
       const result = await api(path, {
@@ -935,7 +1302,7 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
           })}
           {!loading && !visibleChats.length && <div className="empty-chat-list">{search ? 'Чаты не найдены' : 'Чатов пока нет. Начни разговор!'}</div>}
         </div>
-        <div className="sidebar-bottom"><button className="profile-button" onClick={() => setModal('profile')}><Avatar user={user} /><span className="profile-copy"><strong>{user.username}<small className="user-tag">#{user.tag}</small></strong><small><span className="tiny-dot" /> В сети</small></span><Icon name="more" size={18} /></button><button className="icon-button sidebar-settings" onClick={() => { setDeleteError(''); setSettingsSection('appearance'); }} aria-label="Настройки" title="Настройки"><Icon name="settings" /></button></div>
+        <div className="sidebar-bottom"><button className="profile-button" onClick={() => { setProfileBio(user.bio || ''); setProfileBirthDate(user.birth_date || ''); setModal('profile'); }}><Avatar user={user} /><span className="profile-copy"><strong>{user.username}<small className="user-tag">#{user.tag}</small></strong><small><span className={`presence-dot ${user.is_online ? 'presence-dot-online' : ''}`} />{user.is_online ? 'В сети' : 'Не в сети'}</small></span><Icon name="more" size={18} /></button><button className="icon-button sidebar-settings" onClick={() => { setDeleteError(''); setSettingsSection('appearance'); }} aria-label="Настройки" title="Настройки"><Icon name="settings" /></button></div>
       </aside>
 
       <section className={`conversation ${mobileList ? 'conversation-mobile-hidden' : ''}`}>
@@ -949,7 +1316,7 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
           <>
             <div className="conversation-heading">
               <Avatar user={activeChat.kind === 'group' ? { username: activeChat.name, avatar_color: 'violet' } : activeChat.members.find((member) => member.id !== user.id) || user} />
-              <div className="conversation-title"><strong>{activeChat.name}<span className="chat-tag">{activeChat.kind === 'group' ? 'группа' : `#${activeChat.members.find((member) => member.id !== user.id)?.tag || ''}`}</span></strong><small>{activeChat.kind === 'group' ? <><Icon name="users" size={13} /> {activeChat.members.length} участников</> : <><span className="tiny-dot" /> Личные сообщения</>}</small></div>
+              <div className="conversation-title"><strong>{activeChat.name}<span className="chat-tag">{activeChat.kind === 'group' ? 'группа' : `#${activePeer?.tag || ''}`}</span></strong><small>{activeChat.kind === 'group' ? <><Icon name="users" size={13} /> {activeChat.members.length} участников</> : <><span className={`presence-dot ${activePeer?.is_online ? 'presence-dot-online' : ''}`} /> {formatPresence(activePeer)}</>}</small></div>
               <div className="conversation-actions"><button className="icon-button" onClick={() => showNotice('Аудиозвонки подключаются отдельно.')} aria-label="Аудиозвонок"><Icon name="phone" /></button><button className="icon-button" onClick={() => showNotice('Видеозвонки подключаются отдельно.')} aria-label="Видеозвонок"><Icon name="video" /></button><span className="action-divider" /><button className="icon-button" onClick={() => setModal('details')} aria-label="Информация о чате"><Icon name="more" /></button></div>
             </div>
             <div className="messages-area" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }}>
@@ -982,6 +1349,12 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
                   </div>
                 );
               })}
+              {typingUsers[activeId] && Object.keys(typingUsers[activeId]).length > 0 && (
+                <div className="typing-indicator" role="status">
+                  <span className="typing-dots"><i /><i /><i /></span>
+                  <span>{Object.values(typingUsers[activeId]).slice(0, 2).join(', ')} печатает…</span>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
             <div className="composer-wrap">
@@ -994,16 +1367,16 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
                   { label: 'Зачёркнутый', icon: 'strike', prefix: '~~' },
                   { label: 'Подчёркнутый', icon: 'underline', prefix: '__' },
                   { label: 'Спойлер', icon: 'eye', prefix: '||' },
-                  { label: 'Код', icon: 'code', prefix: '`' },
-                  { label: 'Блок кода', icon: 'code', prefix: '```\n', suffix: '\n```' },
-                ].map((item) => <button key={item.label} role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => applyFormatting(item.prefix, item.suffix || item.prefix)}><Icon name={item.icon} size={15} />{item.label}</button>)}
+                  { label: 'Код', icon: 'code', code: true },
+                ].map((item) => <button key={item.label} role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => item.code ? applyCodeFormatting() : applyFormatting(item.prefix, item.suffix || item.prefix)}><Icon name={item.icon} size={15} />{item.label}</button>)}
               </div>}
               {stagedAttachments.length > 0 && <div className="staged-attachments">{stagedAttachments.map((attachment) => <div className="staged-file" key={attachment.id}><Icon name={attachment.content_type.startsWith('image/') ? 'image' : attachment.content_type.startsWith('video/') ? 'video' : 'file'} size={17} /><span>{attachment.filename}</span><button type="button" disabled={busy} onClick={() => removeStagedAttachment(attachment)} aria-label={`Убрать ${attachment.filename}`}><Icon name="close" size={14} /></button></div>)}</div>}
+              {storageConfigured === false && <div className="upload-status upload-unavailable" role="status">Файлы пока недоступны: Object Storage не подключён к backend.</div>}
               {uploading && <div className="upload-status"><span className="tiny-dot" />Загружаем файл в защищённое хранилище…</div>}
               <form className="composer" onSubmit={sendMessage}>
                 <button type="button" className={`attach-button ${showAttach ? 'tool-active' : ''}`} disabled={Boolean(editingId) || uploading || busy} onClick={() => { setShowAttach(!showAttach); setShowEmoji(false); }} aria-label="Прикрепить файл"><Icon name="plus" size={23} /></button>
                 <div className="composer-input-wrap">
-                  <textarea ref={messageInput} rows="1" value={message} disabled={busy || uploading} onChange={(event) => { setMessage(event.target.value); event.currentTarget.style.height = 'auto'; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 120)}px`; }} onContextMenu={(event) => { const input = event.currentTarget; if (input.selectionStart === input.selectionEnd) return; event.preventDefault(); setFormatMenu({ x: Math.min(event.clientX, window.innerWidth - 210), y: Math.min(event.clientY, window.innerHeight - 270) }); }} onKeyDown={(event) => { if (event.key === 'Escape') setFormatMenu(null); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onFocus={() => { setShowAttach(false); setShowEmoji(false); }} placeholder={editingId ? 'Измени сообщение...' : 'Написать сообщение...'} aria-label="Сообщение" />
+                  <textarea ref={messageInput} rows="1" value={message} disabled={busy || uploading} onChange={(event) => { handleComposerChange(event.target.value); event.currentTarget.style.height = 'auto'; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 120)}px`; }} onContextMenu={(event) => { const input = event.currentTarget; if (input.selectionStart === input.selectionEnd) return; event.preventDefault(); setFormatMenu({ x: Math.min(event.clientX, window.innerWidth - 210), y: Math.min(event.clientY, window.innerHeight - 270) }); }} onKeyDown={(event) => { if (event.key === 'Escape') setFormatMenu(null); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onFocus={() => { setShowAttach(false); setShowEmoji(false); }} placeholder={editingId ? 'Измени сообщение...' : 'Написать сообщение...'} aria-label="Сообщение" />
                   <button type="button" className={`emoji-button ${showEmoji ? 'tool-active' : ''}`} onClick={() => { setShowEmoji(!showEmoji); setShowAttach(false); }} aria-label="Выбрать эмодзи"><Icon name="smile" size={21} /></button>
                 </div>
                 {editingId && <button type="button" className="cancel-edit" onClick={() => { setEditingId(''); setMessage(''); }}>Отмена</button>}
@@ -1018,9 +1391,65 @@ function Messenger({ user, onLogout, theme, onThemeChange, density, onDensityCha
       </section>
 
       {modal === 'contact' && <Modal title={groupMode ? 'Создать группу' : 'Новый разговор'} onClose={() => { setModal(''); setModalError(''); setUserSearch(''); setNewContact(''); setGroupName(''); setGroupMode(false); }}><div className="modal-tabs"><button className={!groupMode ? 'modal-tab-active' : ''} onClick={() => { setGroupMode(false); setModalError(''); }}>Личное сообщение</button><button className={groupMode ? 'modal-tab-active' : ''} onClick={() => { setGroupMode(true); setModalError(''); }}>Групповой чат</button></div>{groupMode ? <form className="modal-form" onSubmit={createGroup}><label className="field-label">Название группы<input autoFocus value={groupName} onChange={(event) => setGroupName(event.target.value)} maxLength={80} placeholder="Например, Дизайн-команда" /></label><label className="field-label">Участники (имена через запятую)<input value={newContact} onChange={(event) => setNewContact(event.target.value)} placeholder="alex, maria" /></label><p className="modal-copy">Добавь точные имена пользователей, разделяя их запятыми.</p>{modalError && <p className="auth-error">{modalError}</p>}<button className="button button-primary modal-submit" type="submit"><Icon name="users" size={17} />Создать группу</button></form> : <><p className="modal-copy">Ищи по имени пользователя или тегу. Создадим личный чат.</p><label className="field-label">Имя пользователя<input autoFocus value={newContact || userSearch} onChange={(event) => { setNewContact(event.target.value); setUserSearch(event.target.value); }} placeholder="Например, Алексей" /></label>{userSearchResults.length > 0 && <div className="user-search-results">{userSearchResults.map((result) => <button key={result.id} onClick={() => chooseUser(result.username)}><Avatar user={result} /><span><strong>{result.username}</strong><small>#{result.tag}</small></span><Icon name="back" size={17} /></button>)}</div>}{modalError && <p className="auth-error">{modalError}</p>}<form className="modal-form" onSubmit={openDirect}><button className="button button-primary modal-submit" type="submit"><Icon name="search" size={17} />Найти и открыть чат</button></form><div className="modal-tip"><span className="sparkle">✳</span><span>Пользователь должен сначала создать аккаунт Otiscord.</span></div></>}</Modal>}
-      {modal === 'profile' && <Modal title="Твой профиль" onClose={() => setModal('')}><div className="profile-modal-user"><Avatar user={user} large /><div><strong>{user.username}</strong><span>{user.username}#{user.tag}</span></div></div><div className="profile-settings-row"><span><Icon name="bell" size={18} />Аккаунт</span><span className="status-pill">Подключён</span></div><button className="button button-outline logout-button" onClick={logout}>Выйти из аккаунта</button><button className="button button-outline settings-open-button" onClick={() => { setModal(''); setSettingsSection('appearance'); }}>Открыть настройки <Icon name="settings" size={16} /></button></Modal>}
+      {modal === 'profile' && <Modal title="Твой профиль" onClose={() => { setModal(''); setAvatarFile(null); }} className="profile-edit-modal">
+        <div className="profile-modal-user">
+          <button type="button" className="avatar-edit-button" onClick={() => avatarInput.current?.click()} disabled={avatarBusy} aria-label="Изменить аватар">
+            <Avatar user={user} large /><span>Изменить фото</span>
+          </button>
+          <input ref={avatarInput} hidden type="file" accept="image/png,image/jpeg,image/webp,image/avif" onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (!file) return;
+            if (file.size > 10 * 1024 * 1024) {
+              showNotice('Исходное изображение должно быть меньше 10 МБ.');
+              return;
+            }
+            setAvatarFile(file);
+          }} />
+          <div><strong>{user.username}</strong><span>{user.username}#{user.tag}</span><small>{formatPresence(user)}</small></div>
+        </div>
+        <form className="profile-edit-form" onSubmit={saveProfile}>
+          <label className="field-label">О себе<textarea maxLength={190} rows={3} value={profileBio} onChange={(event) => setProfileBio(event.target.value)} placeholder="Расскажи немного о себе" /></label>
+          <label className="field-label">Дата рождения<input type="date" max={new Date().toISOString().slice(0, 10)} value={profileBirthDate} onChange={(event) => setProfileBirthDate(event.target.value)} /></label>
+          <div className="profile-edit-footer"><small>{profileBio.length}/190 символов</small><button className="button button-primary" type="submit" disabled={profileBusy}>{profileBusy ? 'Сохраняем…' : 'Сохранить профиль'}</button></div>
+        </form>
+        <button className="button button-outline logout-button" onClick={logout}>Выйти из аккаунта</button>
+        {avatarFile && <AvatarCropModal file={avatarFile} onClose={() => setAvatarFile(null)} onSave={saveAvatar} />}
+      </Modal>}
       {settingsSection && <SettingsPanel user={user} section={settingsSection} onSectionChange={setSettingsSection} theme={theme} onThemeChange={onThemeChange} density={density} onDensityChange={onDensityChange} notificationsEnabled={notificationsEnabled} onToggleNotifications={onToggleNotifications} onLogout={logout} onDeleteAccount={deleteAccount} deleteBusy={deleteBusy} deleteError={deleteError} />}
-      {modal === 'details' && activeChat && <Modal title="Информация о чате" onClose={() => setModal('')}><div className="chat-details-user"><Avatar user={activeChat.kind === 'group' ? { username: activeChat.name, avatar_color: 'violet' } : activeChat.members.find((member) => member.id !== user.id) || user} large /><strong>{activeChat.name}</strong><span>{activeChat.kind === 'group' ? `Групповой чат · ${activeChat.members.length} участников` : activeChat.members.filter((member) => member.id !== user.id).map((member) => `${member.username}#${member.tag}`).join(', ')}</span></div><div className="profile-settings-row"><span><Icon name="users" size={18} />Участники</span><span className="status-pill">{activeChat.members.length}</span></div></Modal>}
+      {modal === 'details' && activeChat && <Modal title={activeChat.kind === 'group' ? 'Управление группой' : 'Информация о чате'} onClose={() => setModal('')} className="chat-details-modal">
+        <div className="chat-details-user">
+          <Avatar user={activeChat.kind === 'group' ? { username: activeChat.name, avatar_color: 'violet' } : activePeer || user} large />
+          <strong>{activeChat.name}</strong>
+          <span>{activeChat.kind === 'group' ? `${activeChat.members.length} участников` : formatPresence(activePeer)}</span>
+          {activePeer?.bio && <p>{activePeer.bio}</p>}
+        </div>
+        <div className="profile-settings-row"><span><Icon name="users" size={18} />Участники</span><span className="status-pill">{activeChat.members.length}</span></div>
+        <div className="group-member-list">
+          {activeChat.members.map((member) => <div className="group-member" key={member.id}>
+            <Avatar user={member} />
+            <span><strong>{member.username}{member.id === activeChat.created_by && <small className="group-owner-label">создатель</small>}</strong><small><span className={`presence-dot ${member.is_online ? 'presence-dot-online' : ''}`} />{formatPresence(member)}</small></span>
+            {activeChat.kind === 'group' && activeChat.created_by === user.id && member.id !== user.id && <button type="button" className="icon-button group-remove-member" disabled={groupBusy} onClick={() => removeGroupMember(member)} aria-label={`Удалить ${member.username} из группы`} title="Удалить из группы"><Icon name="trash" size={16} /></button>}
+          </div>)}
+        </div>
+        {activeChat.kind === 'group' && <>
+          {activeChat.created_by === user.id && <form className="group-add-member-form" onSubmit={addGroupMembers}>
+            <label className="field-label">Добавить по имени пользователя<input value={groupMemberName} onChange={(event) => setGroupMemberName(event.target.value)} placeholder="имя1, имя2" /></label>
+            <button className="button button-primary" type="submit" disabled={groupBusy || !groupMemberName.trim()}>Добавить</button>
+          </form>}
+          <div className="group-actions">
+            {activeChat.created_by === user.id && <button className="button button-danger" type="button" onClick={() => {
+              if (window.confirm('Удалить группу и всю историю сообщений для всех участников?')) deleteActiveGroup();
+            }} disabled={groupBusy}>Удалить группу</button>}
+            <button className="button button-outline" type="button" onClick={() => {
+              const text = activeChat.created_by === user.id
+                ? 'Выйти из группы? Создатель будет случайно выбран из оставшихся участников.'
+                : 'Выйти из группы?';
+              if (window.confirm(text)) leaveActiveGroup();
+            }} disabled={groupBusy}>Выйти из группы</button>
+          </div>
+        </>}
+      </Modal>}
       {pendingDelete && <Modal title="Удалить сообщение?" onClose={() => setPendingDelete(null)}><p className="modal-copy">Это удалит сообщение для всех участников чата. Отменить действие будет нельзя.</p><div className="confirm-actions"><button className="button button-outline" onClick={() => setPendingDelete(null)}>Отмена</button><button className="button button-danger" onClick={deleteMessage}>Удалить сообщение</button></div></Modal>}
       {mediaViewer && <MediaViewer attachment={mediaViewer} onClose={() => setMediaViewer(null)} />}
       {notice && <div className="toast"><span className="tiny-dot" />{notice}</div>}
@@ -1088,7 +1517,7 @@ export default function App() {
       {checkingSession
         ? <main className="auth-screen"><div className="auth-brand">Otiscord</div></main>
         : user
-          ? <Messenger user={user} onLogout={() => setUser(null)} theme={theme} onThemeChange={setTheme} density={density} onDensityChange={setDensity} notificationsEnabled={notificationsEnabled} onToggleNotifications={toggleDesktopNotifications} />
+          ? <Messenger user={user} onUserChange={setUser} onLogout={() => setUser(null)} theme={theme} onThemeChange={setTheme} density={density} onDensityChange={setDensity} notificationsEnabled={notificationsEnabled} onToggleNotifications={toggleDesktopNotifications} />
           : <AuthScreen startupError={startupError} onAuthenticated={setUser} />}
     </>
   );
