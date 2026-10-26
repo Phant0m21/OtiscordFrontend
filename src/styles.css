@@ -280,14 +280,20 @@ kbd { padding: 2px 4px; border: 1px solid rgba(171, 202, 188, .1); border-radius
 .emoji-popover { right: clamp(150px, 16vw, 245px); display: grid; grid-template-columns: repeat(6, 34px); gap: 2px; padding: 8px; }
 .emoji-popover button { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 18px; }
 .emoji-popover button:hover { background: rgba(255,255,255,.08); }
-.staged-attachments { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 9px 49px; }
-.staged-file { max-width: min(100%, 260px); display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid rgba(89, 230, 187, .17); border-radius: 8px; color: #a9c3b5; background: rgba(89, 230, 187, .055); font-size: 9px; }
-.staged-file > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staged-attachments { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 7px; max-height: 190px; overflow-y: auto; margin: 0 0 9px 49px; padding: 1px 3px 2px 0; }
+.staged-file { min-width: 0; min-height: 54px; display: flex; align-items: center; gap: 9px; padding: 6px 8px; border: 1px solid rgba(89, 230, 187, .17); border-radius: 9px; color: #a9c3b5; background: rgba(89, 230, 187, .055); }
+.staged-file-preview { width: 40px; height: 40px; display: grid; flex: 0 0 40px; place-items: center; overflow: hidden; border-radius: 6px; color: #85c9a8; background: rgba(0, 0, 0, .16); }
+.staged-file-preview img, .staged-file-preview video { width: 100%; height: 100%; object-fit: cover; }
+.staged-file-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.staged-file-copy strong { overflow: hidden; color: #d5e6dc; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.staged-file-copy small { overflow: hidden; color: #85988e; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .staged-file > button { display: grid; place-items: center; padding: 2px; border: 0; border-radius: 4px; color: #9eb2a7; background: transparent; cursor: pointer; }
+.staged-file > button:disabled { opacity: .45; cursor: not-allowed; }
 .staged-file > button:hover { color: #f1a69b; background: rgba(219, 106, 92, .1); }
 .upload-status { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 49px; color: #8ebba5; font-size: 9px; }
 .upload-status .tiny-dot { animation: upload-pulse 1s ease-in-out infinite alternate; }
 @keyframes upload-pulse { to { opacity: .35; } }
+.attachment-error { margin: 0 0 8px 49px; padding: 8px 10px; border: 1px solid rgba(226,109,96,.2); border-radius: 8px; color: #e7a49c; background: rgba(202,82,69,.07); font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
 .format-context-menu { position: fixed; z-index: 40; width: 190px; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid rgba(153, 209, 187, .17); border-radius: 10px; background: #172725; box-shadow: 0 12px 40px rgba(0,0,0,.42); }
 .format-context-menu button { display: flex; align-items: center; gap: 9px; min-height: 32px; padding: 0 9px; border: 0; border-radius: 6px; color: #cfddd6; background: transparent; text-align: left; cursor: pointer; font-size: 10px; }
 .format-context-menu button:hover { color: #d9f7e9; background: rgba(89, 230, 187, .1); }
@@ -605,7 +611,10 @@ html[data-theme="light"] .format-context-menu { border-color: rgba(54, 93, 74, .
 html[data-theme="light"] .format-context-menu button { color: #40574a; }
 html[data-theme="light"] .format-context-menu button:hover { color: #1d6e4b; background: rgba(53, 179, 129, .11); }
 html[data-theme="light"] .staged-file { color: #416451; border-color: rgba(39, 136, 97, .18); background: rgba(39, 136, 97, .06); }
+html[data-theme="light"] .staged-file-copy strong { color: #344a3d; }
+html[data-theme="light"] .staged-file-copy small { color: #77877e; }
 html[data-theme="light"] .upload-status { color: #4c8064; }
+html[data-theme="light"] .attachment-error { color: #9a4f44; }
 html[data-theme="light"] .chat-unread-badge { color: #fff; background: #178d68; }
 
 .avatar img { width: 100%; height: 100%; display: block; border-radius: inherit; object-fit: cover; }

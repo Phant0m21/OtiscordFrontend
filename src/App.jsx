@@ -53,6 +53,42 @@ function formatTime(value) {
   return new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
+function formatFileSize(size) {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} КБ`;
+  return `${(size / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function StagedAttachment({ item, onRemove, disabled }) {
+  const [previewUrl, setPreviewUrl] = useState('');
+  const file = item.file;
+
+  useEffect(() => {
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) return undefined;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  return (
+    <div className="staged-file" title={file.name}>
+      <div className="staged-file-preview">
+        {previewUrl && file.type.startsWith('image/')
+          ? <img src={previewUrl} alt="" />
+          : previewUrl && file.type.startsWith('video/')
+            ? <video src={previewUrl} muted preload="metadata" />
+            : <Icon name={file.type.startsWith('audio/') ? 'phone' : 'file'} size={18} />}
+      </div>
+      <span className="staged-file-copy">
+        <strong>{file.name}</strong>
+        <small>{item.uploadedAttachment ? 'Загружен · ожидает отправки' : `${formatFileSize(file.size)} · готов к отправке`}</small>
+      </span>
+      <button type="button" disabled={disabled} onClick={onRemove} aria-label={`Убрать ${file.name}`}>
+        <Icon name="close" size={14} />
+      </button>
+    </div>
+  );
+}
+
 function formatPresence(user) {
   if (!user) return '';
   if (user.is_online) return 'В сети';
@@ -451,6 +487,7 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
   const [userSearchResults, setUserSearchResults] = useState([]);
   const [userSearch, setUserSearch] = useState('');
   const [stagedAttachments, setStagedAttachments] = useState([]);
+  const [attachmentError, setAttachmentError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [mediaViewer, setMediaViewer] = useState(null);
   const [formatMenu, setFormatMenu] = useState(null);
@@ -831,24 +868,29 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
   }, [messages, activeId]);
 
   async function selectChat(id) {
-    if (uploading) {
-      showNotice('Подожди, пока файл загрузится.');
+    if (uploading || busy) {
+      showNotice('Дождись завершения текущей отправки.');
       return;
     }
     switchToConversation(id);
   }
 
   function switchToConversation(id) {
-    if (uploading) {
-      showNotice('Подожди, пока файл загрузится.');
+    if (uploading || busy) {
+      showNotice('Дождись завершения текущей отправки.');
       return false;
     }
     if (id !== activeId && stagedAttachmentsRef.current.length) {
       const discarded = stagedAttachmentsRef.current;
       setStagedAttachments([]);
-      Promise.all(discarded.map((item) => api(`/api/attachments/${item.id}`, { method: 'DELETE' })))
-        .catch((error) => showNotice(`Не удалось очистить один из файлов черновика: ${error.message}`));
-      showNotice('Файлы черновика удалены при переходе в другой чат.');
+      setAttachmentError('');
+      const uploaded = discarded.filter((item) => item.uploadedAttachment);
+      Promise.allSettled(uploaded.map((item) => api(`/api/attachments/${item.uploadedAttachment.id}`, { method: 'DELETE' })))
+        .then((results) => {
+          const failed = results.find((result) => result.status === 'rejected');
+          if (failed) showNotice(`Черновик очищен локально, но не удалось удалить временный файл: ${failed.reason.message}`);
+        });
+      showNotice('Вложения черновика очищены при переходе в другой чат.');
     }
     setActiveId(id);
     if (id !== activeId) setMessages([]);
@@ -858,57 +900,53 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
     return true;
   }
 
-  async function addFiles(files) {
+  function addFiles(files) {
     const selectedFiles = [...files];
     if (!activeId || !selectedFiles.length) return;
-    if (stagedAttachments.length + selectedFiles.length > 10) {
-      showNotice('К одному сообщению можно прикрепить не более 10 файлов.');
+    if (busy || uploading) {
+      showNotice('Дождись завершения текущей отправки перед добавлением файлов.');
       return;
     }
-    const oversizedFile = selectedFiles.find((file) => file.size > MAX_ATTACHMENT_SIZE);
-    if (oversizedFile) {
-      showNotice(`${oversizedFile.name}: максимальный размер файла — 50 МБ.`);
-      return;
-    }
-    setUploading(true);
-    setShowAttach(false);
-    try {
-      for (const file of selectedFiles) {
-        const upload = await api(`/api/conversations/${activeId}/attachments`, {
-          method: 'POST',
-          body: JSON.stringify({
-            filename: file.name,
-            content_type: file.type || 'application/octet-stream',
-            size: file.size,
-          }),
-        });
-        try {
-          const response = await fetch(upload.upload_url, {
-            method: 'PUT',
-            headers: upload.headers,
-            body: file,
-          });
-          if (!response.ok) throw new Error(`Не удалось загрузить ${file.name} (HTTP ${response.status}).`);
-          await api(`/api/attachments/${upload.id}/complete`, { method: 'POST' });
-          setStagedAttachments((current) => [...current, upload.attachment]);
-        } catch (error) {
-          await api(`/api/attachments/${upload.id}`, { method: 'DELETE' });
-          throw error;
-        }
+    setAttachmentError('');
+    const availableSlots = Math.max(0, 10 - stagedAttachments.length);
+    const acceptedFiles = [];
+    const rejectedFiles = [];
+    for (const file of selectedFiles) {
+      if (file.size > MAX_ATTACHMENT_SIZE) {
+        rejectedFiles.push(`${file.name}: размер больше 50 МБ`);
+      } else if (acceptedFiles.length < availableSlots) {
+        acceptedFiles.push(file);
+      } else {
+        rejectedFiles.push(`${file.name}: максимум 10 файлов в сообщении`);
       }
-    } catch (error) {
-      showNotice(error.message || 'Не удалось загрузить файл.');
-    } finally {
-      setUploading(false);
+    }
+    if (acceptedFiles.length) {
+      setStagedAttachments((current) => [
+        ...current,
+        ...acceptedFiles.map((file) => ({
+          id: crypto.randomUUID(),
+          file,
+          uploadedAttachment: null,
+        })),
+      ]);
+    }
+    setShowAttach(false);
+    if (rejectedFiles.length) {
+      const error = rejectedFiles.join('. ');
+      setAttachmentError(error);
+      showNotice(error);
     }
   }
 
-  async function removeStagedAttachment(attachment) {
-    setStagedAttachments((current) => current.filter((item) => item.id !== attachment.id));
-    try {
-      await api(`/api/attachments/${attachment.id}`, { method: 'DELETE' });
-    } catch (error) {
-      showNotice(`Файл удалён из черновика, но не очищен на сервере: ${error.message}`);
+  async function removeStagedAttachment(item) {
+    setStagedAttachments((current) => current.filter((attachment) => attachment.id !== item.id));
+    setAttachmentError('');
+    if (item.uploadedAttachment) {
+      try {
+        await api(`/api/attachments/${item.uploadedAttachment.id}`, { method: 'DELETE' });
+      } catch (error) {
+        showNotice(`Файл убран из черновика, но не удалён из хранилища: ${error.message}`);
+      }
     }
   }
 
@@ -1076,32 +1114,81 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
     if ((!content && !stagedAttachments.length) || !activeId || busy || uploading) return;
     setBusy(true);
     const conversationId = activeId;
-    const attachmentSnapshot = editingId ? [] : stagedAttachments;
+    const stagedSnapshot = editingId ? [] : [...stagedAttachments];
+    let attachmentSnapshot = [];
+    let optimisticMessage = null;
+    let clientId = null;
     const previousConversation = conversationsRef.current.find((item) => item.id === conversationId);
     const originalMessage = editingId ? messagesRef.current.find((item) => item.id === editingId) : null;
-    const sendFingerprint = JSON.stringify([conversationId, content, attachmentSnapshot.map((item) => item.id)]);
-    const clientId = editingId ? null
-      : pendingSendRef.current?.fingerprint === sendFingerprint
-        ? pendingSendRef.current.id
-        : crypto.randomUUID();
-    if (!editingId) pendingSendRef.current = { fingerprint: sendFingerprint, id: clientId };
-    const optimisticMessage = editingId ? null : {
-      id: clientId,
-      conversation_id: conversationId,
-      content: content || null,
-      created_at: new Date().toISOString(),
-      edited_at: null,
-      deleted_at: null,
-      author: user,
-      reactions: [],
-      attachments: attachmentSnapshot,
-    };
-    if (optimisticMessage) upsertMessage(optimisticMessage);
-    if (originalMessage) upsertMessage({ ...originalMessage, content });
-    window.clearTimeout(typingTimerRef.current);
-    sendTypingState(false);
+    setAttachmentError('');
     try {
-      const path = editingId ? `/api/messages/${editingId}` : `/api/conversations/${activeId}/messages`;
+      const preparedFiles = [];
+      const filesToUpload = stagedSnapshot.filter((item) => !item.uploadedAttachment);
+      if (filesToUpload.length) setUploading(true);
+      for (const item of stagedSnapshot) {
+        if (item.uploadedAttachment) {
+          preparedFiles.push(item);
+          continue;
+        }
+        const file = item.file;
+        const upload = await api(`/api/conversations/${conversationId}/attachments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            filename: file.name,
+            content_type: file.type || 'application/octet-stream',
+            size: file.size,
+          }),
+        });
+        try {
+          const response = await fetch(upload.upload_url, {
+            method: 'PUT',
+            headers: upload.headers,
+            body: file,
+          });
+          if (!response.ok) {
+            throw new Error(`Не удалось загрузить «${file.name}» в хранилище (HTTP ${response.status}).`);
+          }
+          const uploadedAttachment = await api(`/api/attachments/${upload.id}/complete`, { method: 'POST' });
+          const preparedFile = { ...item, uploadedAttachment };
+          preparedFiles.push(preparedFile);
+          setStagedAttachments((current) => current.map((staged) => (
+            staged.id === item.id ? preparedFile : staged
+          )));
+        } catch (error) {
+          try {
+            await api(`/api/attachments/${upload.id}`, { method: 'DELETE' });
+          } catch (cleanupError) {
+            throw new Error(`${error.message} Не удалось удалить незавершённую загрузку: ${cleanupError.message}`);
+          }
+          throw error;
+        }
+      }
+      attachmentSnapshot = preparedFiles.map((item) => item.uploadedAttachment).filter(Boolean);
+      if ((!content && !attachmentSnapshot.length) || !conversationId) {
+        throw new Error('Добавь текст или файл перед отправкой.');
+      }
+      const sendFingerprint = JSON.stringify([conversationId, content, attachmentSnapshot.map((item) => item.id)]);
+      clientId = editingId ? null
+        : pendingSendRef.current?.fingerprint === sendFingerprint
+          ? pendingSendRef.current.id
+          : crypto.randomUUID();
+      if (!editingId) pendingSendRef.current = { fingerprint: sendFingerprint, id: clientId };
+      optimisticMessage = editingId ? null : {
+        id: clientId,
+        conversation_id: conversationId,
+        content: content || null,
+        created_at: new Date().toISOString(),
+        edited_at: null,
+        deleted_at: null,
+        author: user,
+        reactions: [],
+        attachments: attachmentSnapshot,
+      };
+      if (optimisticMessage) upsertMessage(optimisticMessage);
+      if (originalMessage) upsertMessage({ ...originalMessage, content });
+      window.clearTimeout(typingTimerRef.current);
+      sendTypingState(false);
+      const path = editingId ? `/api/messages/${editingId}` : `/api/conversations/${conversationId}/messages`;
       const result = await api(path, {
         method: editingId ? 'PATCH' : 'POST',
         body: JSON.stringify({
@@ -1123,15 +1210,17 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
       setShowEmoji(false);
       setShowAttach(false);
     } catch (error) {
-      if (optimisticMessage) {
+      if (optimisticMessage && clientId) {
         setMessages((current) => current.filter((item) => item.id !== clientId));
         setConversations((current) => current.map((item) => item.id === conversationId && item.last_message?.id === clientId
           ? { ...item, last_message: previousConversation?.last_message || null, updated_at: previousConversation?.updated_at || item.updated_at }
           : item));
       }
       if (originalMessage) upsertMessage(originalMessage);
+      setAttachmentError(error.message || 'Не удалось отправить сообщение.');
       showNotice(error.message);
     } finally {
+      setUploading(false);
       setBusy(false);
     }
   }
@@ -1370,9 +1459,17 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
                   { label: 'Код', icon: 'code', code: true },
                 ].map((item) => <button key={item.label} role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => item.code ? applyCodeFormatting() : applyFormatting(item.prefix, item.suffix || item.prefix)}><Icon name={item.icon} size={15} />{item.label}</button>)}
               </div>}
-              {stagedAttachments.length > 0 && <div className="staged-attachments">{stagedAttachments.map((attachment) => <div className="staged-file" key={attachment.id}><Icon name={attachment.content_type.startsWith('image/') ? 'image' : attachment.content_type.startsWith('video/') ? 'video' : 'file'} size={17} /><span>{attachment.filename}</span><button type="button" disabled={busy} onClick={() => removeStagedAttachment(attachment)} aria-label={`Убрать ${attachment.filename}`}><Icon name="close" size={14} /></button></div>)}</div>}
+              {stagedAttachments.length > 0 && <div className="staged-attachments" aria-label="Вложения к сообщению">
+                {stagedAttachments.map((item) => <StagedAttachment
+                  key={item.id}
+                  item={item}
+                  disabled={busy}
+                  onRemove={() => removeStagedAttachment(item)}
+                />)}
+              </div>}
               {storageConfigured === false && <div className="upload-status upload-unavailable" role="status">Файлы пока недоступны: Object Storage не подключён к backend.</div>}
-              {uploading && <div className="upload-status"><span className="tiny-dot" />Загружаем файл в защищённое хранилище…</div>}
+              {attachmentError && <div className="attachment-error" role="alert">{attachmentError}</div>}
+              {uploading && <div className="upload-status" role="status"><span className="tiny-dot" />Загружаем файлы в защищённое хранилище… Не закрывай страницу.</div>}
               <form className="composer" onSubmit={sendMessage}>
                 <button type="button" className={`attach-button ${showAttach ? 'tool-active' : ''}`} disabled={Boolean(editingId) || uploading || busy} onClick={() => { setShowAttach(!showAttach); setShowEmoji(false); }} aria-label="Прикрепить файл"><Icon name="plus" size={23} /></button>
                 <div className="composer-input-wrap">
@@ -1380,7 +1477,7 @@ function Messenger({ user, onUserChange, onLogout, theme, onThemeChange, density
                   <button type="button" className={`emoji-button ${showEmoji ? 'tool-active' : ''}`} onClick={() => { setShowEmoji(!showEmoji); setShowAttach(false); }} aria-label="Выбрать эмодзи"><Icon name="smile" size={21} /></button>
                 </div>
                 {editingId && <button type="button" className="cancel-edit" onClick={() => { setEditingId(''); setMessage(''); }}>Отмена</button>}
-                <button className="button button-primary send-button" type="submit" disabled={(!message.trim() && !stagedAttachments.length) || busy || uploading}><span>{editingId ? 'Сохранить' : 'Отправить'}</span><Icon name="send" size={17} /></button>
+                <button className="button button-primary send-button" type="submit" disabled={(!message.trim() && !stagedAttachments.length) || busy || uploading}><span>{uploading ? 'Загружаем…' : busy ? 'Отправляем…' : editingId ? 'Сохранить' : 'Отправить'}</span><Icon name="send" size={17} /></button>
               </form>
               <div className="composer-hint">Enter — отправить <span>·</span> Shift + Enter — новая строка <span>·</span> ПКМ по выделенному тексту — форматирование</div>
             </div>
